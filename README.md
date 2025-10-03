@@ -27,7 +27,11 @@ python generate_forms.py alumnos.csv plantilla.docx --name-column Nombres
 - `--name-column`: (opcional) nombre de la columna usada para generar el nombre
   de cada archivo. También acepta plantillas con expresiones como
   `'F2-$Nombres[0]-$Apellidos[0]'` o `"F2-{{Nombres[0]}}-{{Apellidos[0]}}"`.
-  Cada `'$Campo'` (o `{{Campo}}`) inserta el valor completo de la columna, y
+  **Ojo:** si usas el formato con `$`, asegúrate de envolver toda la plantilla
+  entre comillas simples o de escapar los signos de dólar (`\$`) para evitar
+  que el shell los elimine. Como alternativa, utiliza la sintaxis con llaves
+  dobles (`{{...}}`), que funciona sin escapes dentro de comillas dobles. Cada
+  `'$Campo'` (o `{{Campo}}`) inserta el valor completo de la columna, y
   `'$Campo[0]'`/`{{Campo[0]}}` toma solo la primera palabra (separada por
   espacios). Si se omite, se utilizará el primer valor no vacío de la fila o,
   como último recurso, `row_001.docx`, `row_002.docx`, etc.
