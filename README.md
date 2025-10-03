@@ -26,8 +26,9 @@ python generate_forms.py alumnos.csv plantilla.docx --name-column Nombres
 - `plantilla.docx`: documento con los marcadores `[[...]]` que deseas reemplazar.
 - `--name-column`: (opcional) nombre de la columna usada para generar el nombre
   de cada archivo. También acepta plantillas con expresiones como
-  `F2-$Nombres[0]-$Apellidos[0]`. Cada `'$Campo'` inserta el valor completo de
-  la columna, y `'$Campo[0]'` toma solo la primera palabra (separada por
+  `'F2-$Nombres[0]-$Apellidos[0]'` o `"F2-{{Nombres[0]}}-{{Apellidos[0]}}"`.
+  Cada `'$Campo'` (o `{{Campo}}`) inserta el valor completo de la columna, y
+  `'$Campo[0]'`/`{{Campo[0]}}` toma solo la primera palabra (separada por
   espacios). Si se omite, se utilizará el primer valor no vacío de la fila o,
   como último recurso, `row_001.docx`, `row_002.docx`, etc.
 - `--outdir`: (opcional) carpeta de salida. Por defecto se usa `salida/`.

@@ -29,7 +29,10 @@ from typing import Dict, Iterable, Iterator, Optional
 from docx import Document
 
 PLACEHOLDER_PATTERN = re.compile(r"\[\[\s*([^\]]+?)\s*\]\]", re.IGNORECASE)
-NAME_TEMPLATE_PATTERN = re.compile(r"\$([^$\[\]]+?)(?:\[(\d+)\])?")
+NAME_TEMPLATE_PATTERN = re.compile(
+    r"\$(?:\{)?([^$\[\]{}]+?)(?:\[(\d+)\])?(?:\})?"
+)
+BRACED_TEMPLATE_PATTERN = re.compile(r"\{\{\s*([^{}\[\]]+?)(?:\[(\d+)\])?\s*\}\}")
 
 
 def normalize_label(label: Optional[str]) -> str:
@@ -147,7 +150,8 @@ def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_colu
 
     if name_column:
         target = ""
-        if NAME_TEMPLATE_PATTERN.search(name_column):
+        uses_template = NAME_TEMPLATE_PATTERN.search(name_column) or BRACED_TEMPLATE_PATTERN.search(name_column)
+        if uses_template:
             target = evaluate_name_template(name_column, replacements)
         else:
             target = replacements.get(normalize_label(name_column), "")
@@ -170,16 +174,15 @@ def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_colu
 def evaluate_name_template(template: str, replacements: Dict[str, str]) -> str:
     """Return a filename string generated from ``template``.
 
-    ``template`` may contain expressions of the form ``$Campo`` or
-    ``$Campo[0]``. The former inserts the entire value stored in the
+    ``template`` may contain expressions of the form ``$Campo``/``{{Campo}}`` or
+    ``$Campo[0]``/``{{Campo[0]}}``. The former inserts the entire value stored in the
     corresponding column, while the latter first splits the value on
     whitespace and then selects the element at the requested index. Column
     labels follow the same normalization rules used for placeholders.
     Missing columns or indexes yield empty strings.
     """
 
-    def repl(match: re.Match[str]) -> str:
-        label, index_str = match.groups()
+    def resolve(label: str, index_str: Optional[str]) -> str:
         key = normalize_label(label)
         value = replacements.get(key, "")
         if not value:
@@ -195,7 +198,16 @@ def evaluate_name_template(template: str, replacements: Dict[str, str]) -> str:
             return ""
         return value
 
-    return NAME_TEMPLATE_PATTERN.sub(repl, template)
+    def repl(match: re.Match[str]) -> str:
+        label, index_str = match.groups()
+        return resolve(label, index_str)
+
+    def brace_repl(match: re.Match[str]) -> str:
+        label, index_str = match.groups()
+        return resolve(label, index_str)
+
+    with_dollar = NAME_TEMPLATE_PATTERN.sub(repl, template)
+    return BRACED_TEMPLATE_PATTERN.sub(brace_repl, with_dollar)
 
 
 def main() -> None:
