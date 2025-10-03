@@ -30,9 +30,9 @@ from docx import Document
 
 PLACEHOLDER_PATTERN = re.compile(r"\[\[\s*([^\]]+?)\s*\]\]", re.IGNORECASE)
 NAME_TEMPLATE_PATTERN = re.compile(
-    r"\$(?:\{)?([^$\[\]{}]+?)(?:\[(\d+)\])?(?:\})?"
+    r"\$(?:\{)?([^$\[\]{}]+)(?:\[(\d+)\])?(?:\})?"
 )
-BRACED_TEMPLATE_PATTERN = re.compile(r"\{\{\s*([^{}\[\]]+?)(?:\[(\d+)\])?\s*\}\}")
+BRACED_TEMPLATE_PATTERN = re.compile(r"\{\{\s*([^{}\[\]]+)(?:\[(\d+)\])?\s*\}\}")
 
 
 def normalize_label(label: Optional[str]) -> str:
@@ -154,6 +154,13 @@ def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_colu
         if uses_template:
             target = evaluate_name_template(name_column, replacements)
         else:
+            if re.search(r"\[(\d+)\]", name_column) and not ("$" in name_column or "{{" in name_column):
+                raise ValueError(
+                    "La plantilla del nombre no contiene identificadores de columna. "
+                    "Recuerda escapar el símbolo '$' (por ejemplo, usando comillas simples) "
+                    "o emplea la sintaxis con llaves, por ejemplo "
+                    "'F2-$Nombres[0]-$Apellidos[0]' o \"F2-{{Nombres[0]}}-{{Apellidos[0]}}\"."
+                )
             target = replacements.get(normalize_label(name_column), "")
         target = target.strip()
         if target:
@@ -250,7 +257,11 @@ def main() -> None:
         document = Document(str(template_path))
         apply_replacements(document, replacements)
 
-        base_name = resolve_name(row, replacements, name_column=args.name_column, index=index)
+        try:
+            base_name = resolve_name(row, replacements, name_column=args.name_column, index=index)
+        except ValueError as exc:
+            print(f"[ERROR] {exc}")
+            sys.exit(1)
         output_path = outdir / f"{base_name}.docx"
 
         # Avoid accidental overwrite by appending a counter if needed
