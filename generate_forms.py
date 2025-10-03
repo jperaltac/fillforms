@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import unicodedata
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Optional
@@ -43,10 +44,17 @@ def normalize_label(label: Optional[str]) -> str:
     return clean.casefold()
 
 
+def strip_diacritics(text: str) -> str:
+    """Return ``text`` without diacritical marks."""
+
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
 def sanitize_filename(raw: str) -> str:
     """Return a filesystem-friendly version of ``raw``."""
 
-    value = raw.strip()
+    value = strip_diacritics(raw.strip())
     value = re.sub(r"\s+", "_", value)
     value = re.sub(r"[^A-Za-z0-9._-]", "", value)
     return value
