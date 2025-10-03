@@ -1,74 +1,60 @@
+# Rellenar documentos DOCX a partir de un CSV
 
-# Generador de Formularios ANID 2026 (F1 & F2) desde CSV
+Este proyecto toma un archivo CSV y una plantilla DOCX con marcadores del tipo
+`[[Campo]]` para generar un documento por cada fila del CSV.
 
-Este mini-proyecto crea **dos archivos .docx por estudiante** a partir de tus plantillas y de un CSV con los datos.
+Los nombres de columna se comparan con los marcadores sin distinguir mayúsculas
+o minúsculas y también se ignoran los `#` iniciales. Por ejemplo, si tu CSV
+incluye la columna `#Nombres`, podrás usar `[[NOMBRES]]`, `[[nombres]]` o
+`[[Nombres]]` dentro del documento.
 
 ## Requisitos
 
 - Python 3.9+
-- Paquetes:
+- Dependencias:
   ```bash
-  pip install python-docx pandas
+  pip install python-docx
   ```
 
-## Archivos incluidos
-
-- `generate_forms.py` — script principal
-- `estudiantes_template.csv` — plantilla de columnas para tu CSV
-- **Tus plantillas** (ya subidas por ti):
-  - `Formulario_N1_2026 (1).docx`
-  - `Formulario_N_2_2026.docx`
-
-> **Tip:** Mantén los nombres exactos o pásalos con `--f1` y `--f2` si los cambias.
-
-## CSV esperado
-
-Abre `estudiantes_template.csv` y rellena una fila por estudiante.
-Columnas:
-
-- nombre, apellido, run, pasaporte
-- universidad_pregrado, programa_pregrado, semestres_pregrado, region_pregrado
-- promedio_pregrado, nota_final, posicion_egreso, total_generacion, ranking_porcentaje
-- estado_postulacion (valores: `postulacion_formal` | `aceptado` | `alumno_regular`)
-- programa_destino, mencion_destino, universidad_destino, region_postgrado, fecha_inicio_postgrado
-- autoridad_nombre, autoridad_cargo
-
-> Puedes dejar en blanco lo que no tengas. Para RUN/pasaporte, se usa primero `run` y si está vacío se usa `pasaporte`.
-
-## Uso
-
-Coloca tu CSV en la misma carpeta y ejecuta:
+## Uso rápido
 
 ```bash
-python generate_forms.py --csv estudiantes.csv
+python generate_forms.py alumnos.csv plantilla.docx --name-column Nombres
 ```
 
-Se crearán archivos en `./salida` con el formato:
+- `alumnos.csv`: archivo con encabezados en la primera fila.
+- `plantilla.docx`: documento con los marcadores `[[...]]` que deseas reemplazar.
+- `--name-column`: (opcional) nombre de la columna usada para generar el nombre
+  de cada archivo. Si se omite, se utilizará el primer valor no vacío de la
+  fila o, como último recurso, `row_001.docx`, `row_002.docx`, etc.
+- `--outdir`: (opcional) carpeta de salida. Por defecto se usa `salida/`.
+- `--encoding`: (opcional) codificación del CSV. Por defecto `utf-8-sig`.
 
+Cada fila genera un archivo DOCX dentro del directorio de salida. Si el nombre
+resultante ya existe, el script añade un sufijo incremental (`_1`, `_2`, ...).
+
+## Preparar la plantilla
+
+Escribe tus marcadores dentro de dobles corchetes. Algunos ejemplos:
+
+- `Nombre completo: [[Nombres]] [[Apellidos]]`
+- `RUN: [[rut]]`
+- `Programa: [[ Programa ]]`  ← los espacios también se ignoran al comparar.
+
+Dentro de la carpeta [`examples/`](examples/) encontrarás una plantilla de
+ejemplo (`template.docx`) y el CSV correspondiente (`students.csv`). Puedes
+probar el flujo completo con:
+
+```bash
+python generate_forms.py examples/students.csv examples/template.docx --name-column Nombres --outdir examples/output
 ```
-Apellido_Nombre_F1.docx
-Apellido_Nombre_F2.docx
-```
 
-### Opciones
+## Notas
 
-- `--f1 "Formulario_N1_2026 (1).docx"` — ruta a plantilla Formulario N°1
-- `--f2 "Formulario_N_2_2026.docx"` — ruta a plantilla Formulario N°2
-- `--outdir salida` — carpeta de salida
+- Las filas completamente vacías del CSV se ignoran.
+- Los valores se insertan tal cual aparecen en el CSV. Si necesitas formato
+  adicional (por ejemplo, fechas), prepáralo previamente en el CSV.
+- La codificación `utf-8-sig` permite abrir archivos guardados desde Excel que
+  incluyen la marca BOM. Ajusta la opción `--encoding` si tu CSV usa otra
+  codificación.
 
-## ¿Qué rellena exactamente?
-
-- **Formulario N°1** (Notas y Ranking): nombre, RUN/pasaporte, universidad y programa de pregrado, semestres, región, promedio, nota final, posición, total generación y ranking.
-- **Formulario N°2** (Estado del/de la postulante): nombre, RUN/pasaporte, **marca el estado** (checkbox simulado con `[X]`), programa/mención/universidad de destino, región de postgrado, fecha de inicio y autoridad (nombre, cargo).
-
-> El marcado del estado se hace por texto: `postulacion_formal`, `aceptado` o `alumno_regular`.
-
-## Cómo funciona (rápido)
-
-El script busca **líneas que empiezan con etiquetas** exactas del documento y las reescribe con el valor al final. Si una etiqueta no se encuentra (plantilla cambió, espacios, etc.), verás un aviso `[WARN]` pero el script seguirá.
-
-Si quieres máxima robustez, otra alternativa es usar `docxtpl` con placeholders `{{...}}`. Este script evita esa edición previa y funciona **tal cual** con tus plantillas actuales.
-
----
-
-Hecho con cariño para agilizar tu flujo ANID.
