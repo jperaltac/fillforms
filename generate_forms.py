@@ -87,6 +87,17 @@ def apply_replacements(doc: Document, replacements: Dict[str, str]) -> None:
             paragraph.text = updated
 
 
+def clean_cell_value(value: Optional[str]) -> str:
+    """Return a normalized string for a CSV cell value."""
+
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    return text
+
+
 def load_rows(csv_path: Path, encoding: str) -> Iterable[Dict[str, str]]:
     """Yield dictionaries for each non-empty row in ``csv_path``."""
 
@@ -101,7 +112,7 @@ def load_rows(csv_path: Path, encoding: str) -> Iterable[Dict[str, str]]:
                 # Skip completely empty rows
                 if all((value is None or str(value).strip() == "") for value in row.values()):
                     continue
-                yield {key: "" if value is None else str(value) for key, value in row.items() if key}
+                yield {key: clean_cell_value(value) for key, value in row.items() if key}
     except UnicodeDecodeError as exc:
         raise UnicodeDecodeError(
             exc.encoding or encoding,
