@@ -1,205 +1,202 @@
 #!/usr/bin/env python3
+"""General DOCX filler from CSV rows.
+
+This tool reads a CSV file whose first row contains the column labels. Each
+subsequent row is converted into a dictionary and used to fill a DOCX
+template. The template must contain placeholders wrapped in double brackets,
+for example ``[[Nombre]]`` or ``[[RUT]]``. Matching between CSV labels and
+placeholders is case-insensitive and ignores leading ``#`` symbols as well as
+repeated whitespace.
+
+Example::
+
+    python generate_forms.py estudiantes.csv plantilla.docx --name-column Nombres
+
+The command above will generate one document per row inside ``./salida`` (by
+default) and name each file using the ``Nombres`` column.
 """
-Simple generator of ANID Form 1 & Form 2 (2026) per student, from a CSV.
 
-Requirements:
-  - Python 3.9+
-  - pip install python-docx pandas
-
-Usage:
-  1) Put your CSV next to this script (or pass --csv path).
-  2) Keep the original templates with their current names in the same folder or pass --f1/--f2.
-  3) Run:
-        python generate_forms.py --csv estudiantes.csv
-     The script will create ./salida/<Apellido_Nombre>_F1.docx and _F2.docx for each row.
-
-Notes:
-  - This script modifies text inline for each label it can match robustly.
-  - For Formulario N°2 "checkboxes", we emulate checks by adding "[X]" before the chosen status.
-  - If a label is not found exactly (templates change), the script logs a warning but continues.
-"""
+from __future__ import annotations
 
 import argparse
+import csv
+import re
 import sys
 from pathlib import Path
-import pandas as pd
+from typing import Dict, Iterable, Iterator, Optional
+
 from docx import Document
 
-# -------- Utilities --------
-def full_name(row):
-    nombre = str(row.get("nombre", "")).strip()
-    apellido = str(row.get("apellido", "")).strip()
-    return f"{nombre} {apellido}".strip()
+PLACEHOLDER_PATTERN = re.compile(r"\[\[\s*([^\]]+?)\s*\]\]", re.IGNORECASE)
 
-def safe_str(val):
-    return "" if pd.isna(val) else str(val)
 
-def replace_line_startswith(doc, label_map):
-    """
-    Replace any paragraph whose text starts with a given label with "label value".
-    Returns a set of labels that were successfully replaced.
-    """
-    done = set()
-    # Start with normal paragraphs
-    paragraphs = list(doc.paragraphs)
-    # Also inspect tables:
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                paragraphs.extend(cell.paragraphs)
+def normalize_label(label: Optional[str]) -> str:
+    """Return a normalized version of a CSV or placeholder label."""
 
-    for p in paragraphs:
-        text = p.text.strip()
-        for label, value in label_map.items():
-            if label in done:
-                continue
-            if text.startswith(label):
-                # Write "label value" on the same line
-                new_text = f"{label} {value}".rstrip()
-                # Clear existing runs, then add one
-                for r in p.runs:
-                    r.clear()
-                p.add_run(new_text)
-                done.add(label)
-    return done
+    if not label:
+        return ""
+    clean = label.strip()
+    if clean.startswith("#"):
+        clean = clean[1:]
+    clean = re.sub(r"\s+", " ", clean)
+    return clean.casefold()
 
-def mark_status_checkboxes(doc, estado):
-    """
-    For Form 2: emulate a checkbox by prefixing the chosen line with "[X]" and others with "[ ]".
-    Expected estado values (lowercase): postulacion_formal | aceptado | alumno_regular
-    """
-    estado = str(estado or "").strip().lower()
-    targets = {
-        "postulacion_formal": "En proceso de postulación formal",
-        "aceptado": "Aceptado/a",
-        "alumno_regular": "En calidad de Alumno/a Regular",
-    }
-    chosen_label = None
-    if estado in targets:
-        chosen_label = targets[estado]
-    else:
-        # try a few fallbacks
-        if "postula" in estado:
-            chosen_label = targets["postulacion_formal"]
-        elif "regular" in estado:
-            chosen_label = targets["alumno_regular"]
-        elif "acept" in estado:
-            chosen_label = targets["aceptado"]
 
-    paragraphs = list(doc.paragraphs)
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                paragraphs.extend(cell.paragraphs)
+def sanitize_filename(raw: str) -> str:
+    """Return a filesystem-friendly version of ``raw``."""
 
-    for p in paragraphs:
-        raw = p.text.strip()
-        for lbl in targets.values():
-            if raw.startswith(lbl):
-                mark = "[X]" if lbl == chosen_label else "[ ]"
-                new_text = f"{mark} {lbl}"
-                for r in p.runs:
-                    r.clear()
-                p.add_run(new_text)
+    value = raw.strip()
+    value = re.sub(r"\s+", "_", value)
+    value = re.sub(r"[^A-Za-z0-9._-]", "", value)
+    return value
 
-# -------- Fillers --------
-def fill_form_1(doc, row):
-    """
-    Formulario N° 1: Certificado de Nota y Ranking para estudios de Pregrado
-    """
-    nombre_completo = full_name(row)
-    label_map = {
-        "Nombre del/de la Estudiante:": nombre_completo,
-        "RUN o número de pasaporte:": safe_str(row.get("run") or row.get("pasaporte")),
-        "Universidad de Pregrado*:": safe_str(row.get("universidad_pregrado")),
-        "Programa de Estudios de pregrado*:": safe_str(row.get("programa_pregrado")),
-        "Número de semestres de duración del programa académico de pregrado:": safe_str(row.get("semestres_pregrado")),
-        "Región donde cursó los estudios de pregrado:": safe_str(row.get("region_pregrado")),
-        # Notas
-        "PROMEDIO DE NOTAS.": safe_str(row.get("promedio_pregrado")),
-        "NOTA FINAL DE LICENCIATURA O TITULO PROFESIONAL O EQUIVALENTE.": safe_str(row.get("nota_final")),
-        # Ranking
-        "Posición de egreso del/de la estudiante al momento de finalizar su pregrado*:": safe_str(row.get("posicion_egreso")),
-        "Total de estudiantes de su generación de egreso o titulación*.": safe_str(row.get("total_generacion")),
-        "Ranking de egreso de pregrado, respecto de la generación de egreso o titulación": safe_str(row.get("ranking_porcentaje")),
-    }
-    replaced = replace_line_startswith(doc, label_map)
-    missing = set(label_map.keys()) - replaced
-    if missing:
-        print(f"[Form1][WARN] No se pudieron ubicar {len(missing)} etiquetas, revise plantilla o textos:\n  - " + "\n  - ".join(missing))
 
-def fill_form_2(doc, row):
-    """
-    Formulario N° 2: Certificado de Estado del/de la Postulante
-    """
-    nombre_completo = full_name(row)
-    # Emulate checkboxes first
-    mark_status_checkboxes(doc, row.get("estado_postulacion"))
+def iter_paragraphs(element) -> Iterator:
+    """Yield all paragraphs contained in ``element`` (document, cell, etc.)."""
 
-    label_map = {
-        "Nombre del postulante": nombre_completo,
-        "Rut o número de pasaporte del postulante": safe_str(row.get("run") or row.get("pasaporte")),
-        "Programa de destino (nombre del programa, según registro CNA-Chile)*": safe_str(row.get("programa_destino")),
-        "Mención (si aplica, según registro CNA-Chile) *": safe_str(row.get("mencion_destino")),
-        "Universidad (en caso de ser un programa en consorcio, señalar todas las universidades que lo integran) *": safe_str(row.get("universidad_destino")),
-        "Región de los estudios de postgrado": safe_str(row.get("region_postgrado")),
-        "Fecha de inicio de estudios (mes o semestre, año) *": safe_str(row.get("fecha_inicio_postgrado")),
-        "**Nombre, cargo y firma de Autoridad Competente": f"{safe_str(row.get('autoridad_nombre'))}, {safe_str(row.get('autoridad_cargo'))}".strip(", "),
-    }
-    replaced = replace_line_startswith(doc, label_map)
-    missing = set(label_map.keys()) - replaced
-    if missing:
-        print(f"[Form2][WARN] No se pudieron ubicar {len(missing)} etiquetas, revise plantilla o textos:\n  - " + "\n  - ".join(missing))
+    if hasattr(element, "paragraphs"):
+        for paragraph in element.paragraphs:
+            yield paragraph
+    if hasattr(element, "tables"):
+        for table in element.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    yield from iter_paragraphs(cell)
 
-# -------- Main --------
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", default="estudiantes.csv", help="Ruta al CSV con datos de estudiantes")
-    ap.add_argument("--f1", default="Formulario_N1_2026 (1).docx", help="Plantilla Formulario N°1 (DOCX)")
-    ap.add_argument("--f2", default="Formulario_N_2_2026.docx", help="Plantilla Formulario N°2 (DOCX)")
-    ap.add_argument("--outdir", default="salida", help="Directorio de salida")
-    args = ap.parse_args()
+
+def replace_placeholders(text: str, replacements: Dict[str, str]) -> str:
+    """Replace ``[[...]]`` placeholders in ``text`` using ``replacements``."""
+
+    def repl(match: re.Match[str]) -> str:
+        raw_key = match.group(1)
+        key = normalize_label(raw_key)
+        if key in replacements:
+            return replacements[key]
+        return match.group(0)
+
+    return PLACEHOLDER_PATTERN.sub(repl, text)
+
+
+def apply_replacements(doc: Document, replacements: Dict[str, str]) -> None:
+    """Modify ``doc`` in-place, replacing placeholders for every paragraph."""
+
+    for paragraph in iter_paragraphs(doc):
+        original = paragraph.text
+        updated = replace_placeholders(original, replacements)
+        if updated != original:
+            paragraph.text = updated
+
+
+def load_rows(csv_path: Path, encoding: str) -> Iterable[Dict[str, str]]:
+    """Yield dictionaries for each non-empty row in ``csv_path``."""
+
+    try:
+        with csv_path.open(newline="", encoding=encoding) as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError("El CSV no contiene encabezados")
+            for row in reader:
+                if row is None:
+                    continue
+                # Skip completely empty rows
+                if all((value is None or str(value).strip() == "") for value in row.values()):
+                    continue
+                yield {key: "" if value is None else str(value) for key, value in row.items() if key}
+    except UnicodeDecodeError as exc:
+        raise UnicodeDecodeError(
+            exc.encoding or encoding,
+            exc.object,
+            exc.start,
+            exc.end,
+            f"No se pudo leer el CSV con la codificación {encoding!r}"
+        ) from exc
+
+
+def row_to_replacements(row: Dict[str, str]) -> Dict[str, str]:
+    """Return a mapping of normalized label -> value for a CSV row."""
+
+    replacements: Dict[str, str] = {}
+    for label, value in row.items():
+        key = normalize_label(label)
+        replacements[key] = value
+    return replacements
+
+
+def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_column: Optional[str], index: int) -> str:
+    """Return a base filename for the row."""
+
+    if name_column:
+        target = replacements.get(normalize_label(name_column), "")
+        target = target.strip()
+        if target:
+            sanitized = sanitize_filename(target)
+            if sanitized:
+                return sanitized
+
+    # fallback to first non-empty column value
+    for value in row.values():
+        if value and value.strip():
+            sanitized = sanitize_filename(value)
+            if sanitized:
+                return sanitized
+
+    return f"row_{index:03d}"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Rellena un DOCX por cada fila del CSV usando marcadores [[...]].")
+    parser.add_argument("csv", help="Ruta al CSV que contiene los datos")
+    parser.add_argument("template", help="Ruta al DOCX con marcadores del tipo [[Campo]]")
+    parser.add_argument("--outdir", default="salida", help="Directorio donde se guardarán los archivos generados")
+    parser.add_argument("--name-column", help="Nombre de la columna para el nombre del archivo de salida")
+    parser.add_argument(
+        "--encoding",
+        default="utf-8-sig",
+        help="Codificación usada para leer el CSV (por defecto utf-8-sig)",
+    )
+    args = parser.parse_args()
 
     csv_path = Path(args.csv)
-    f1_path = Path(args.f1)
-    f2_path = Path(args.f2)
+    template_path = Path(args.template)
     outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
 
     if not csv_path.exists():
-        print(f"[ERROR] No existe el CSV: {csv_path}")
+        print(f"[ERROR] No existe el archivo CSV: {csv_path}")
         sys.exit(1)
-    if not f1_path.exists():
-        print(f"[ERROR] No se encontró la plantilla F1: {f1_path}")
-        sys.exit(1)
-    if not f2_path.exists():
-        print(f"[ERROR] No se encontró la plantilla F2: {f2_path}")
+    if not template_path.exists():
+        print(f"[ERROR] No existe la plantilla DOCX: {template_path}")
         sys.exit(1)
 
-    df = pd.read_csv(csv_path)
-    required = ["nombre", "apellido"]
-    for col in required:
-        if col not in df.columns:
-            print(f"[ERROR] Falta columna obligatoria en CSV: {col}")
-            sys.exit(1)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    for idx, row in df.iterrows():
-        # Load fresh templates for each student
-        doc1 = Document(str(f1_path))
-        doc2 = Document(str(f2_path))
+    try:
+        rows = list(load_rows(csv_path, args.encoding))
+    except (UnicodeDecodeError, ValueError) as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
+    if not rows:
+        print("[WARN] El CSV no contiene filas con datos. Nada que generar.")
+        return
 
-        fill_form_1(doc1, row)
-        fill_form_2(doc2, row)
+    for index, row in enumerate(rows, start=1):
+        replacements = row_to_replacements(row)
+        document = Document(str(template_path))
+        apply_replacements(document, replacements)
 
-        apellido = safe_str(row.get("apellido")).replace(" ", "_")
-        nombre = safe_str(row.get("nombre")).replace(" ", "_")
-        base = f"{apellido}_{nombre}" if (apellido or nombre) else f"estudiante_{idx+1}"
+        base_name = resolve_name(row, replacements, name_column=args.name_column, index=index)
+        output_path = outdir / f"{base_name}.docx"
 
-        out1 = outdir / f"{base}_F1.docx"
-        out2 = outdir / f"{base}_F2.docx"
-        doc1.save(str(out1))
-        doc2.save(str(out2))
-        print(f"[OK] Generados: {out1.name} y {out2.name}")
+        # Avoid accidental overwrite by appending a counter if needed
+        counter = 1
+        final_path = output_path
+        while final_path.exists():
+            final_path = outdir / f"{base_name}_{counter}.docx"
+            counter += 1
+
+        document.save(str(final_path))
+        print(f"[OK] Generado: {final_path}")
+
 
 if __name__ == "__main__":
     main()
+
