@@ -28,6 +28,7 @@ from typing import Dict, Iterable, Iterator, Optional
 from docx import Document
 
 PLACEHOLDER_PATTERN = re.compile(r"\[\[\s*([^\]]+?)\s*\]\]", re.IGNORECASE)
+NAME_TEMPLATE_PATTERN = re.compile(r"\$([^$\[\]]+?)(?:\[(\d+)\])?")
 
 
 def normalize_label(label: Optional[str]) -> str:
@@ -137,7 +138,11 @@ def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_colu
     """Return a base filename for the row."""
 
     if name_column:
-        target = replacements.get(normalize_label(name_column), "")
+        target = ""
+        if NAME_TEMPLATE_PATTERN.search(name_column):
+            target = evaluate_name_template(name_column, replacements)
+        else:
+            target = replacements.get(normalize_label(name_column), "")
         target = target.strip()
         if target:
             sanitized = sanitize_filename(target)
@@ -152,6 +157,37 @@ def resolve_name(row: Dict[str, str], replacements: Dict[str, str], *, name_colu
                 return sanitized
 
     return f"row_{index:03d}"
+
+
+def evaluate_name_template(template: str, replacements: Dict[str, str]) -> str:
+    """Return a filename string generated from ``template``.
+
+    ``template`` may contain expressions of the form ``$Campo`` or
+    ``$Campo[0]``. The former inserts the entire value stored in the
+    corresponding column, while the latter first splits the value on
+    whitespace and then selects the element at the requested index. Column
+    labels follow the same normalization rules used for placeholders.
+    Missing columns or indexes yield empty strings.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        label, index_str = match.groups()
+        key = normalize_label(label)
+        value = replacements.get(key, "")
+        if not value:
+            return ""
+        if index_str is not None:
+            try:
+                index = int(index_str)
+            except ValueError:
+                return ""
+            parts = value.split()
+            if 0 <= index < len(parts):
+                return parts[index]
+            return ""
+        return value
+
+    return NAME_TEMPLATE_PATTERN.sub(repl, template)
 
 
 def main() -> None:
